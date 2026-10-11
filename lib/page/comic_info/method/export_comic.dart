@@ -273,7 +273,7 @@ Future<String> _exportComicAsZip(
     for (final image in chapter.images) {
       packInfo.originalImagePaths.add(image.source.path);
       packInfo.packImagePaths.add(
-        p.join(chapter.folderName, image.exportFileName),
+        p.posix.join(chapter.folderName, image.exportFileName),
       );
     }
   }

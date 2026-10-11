@@ -111,7 +111,9 @@ pub async fn extract_data_backup_zip(zip_path: String, extract_dir: String) -> R
                     rquickjs_playground::tr!("failed-to-read-zip-entry", arg0 = i)
                 })?;
 
-                let entry_path = entry.name().to_string();
+                // 旧版 Windows 导出的 zip 用反斜杠作分隔符，在 iOS/Android 上会被当成
+                // 文件名的一部分，解压后找不到章节目录。
+                let entry_path = entry.name().replace('\\', "/");
 
                 // 简单防御 zip slip：拒绝包含 .. 的路径
                 if entry_path.split('/').any(|s| s == "..") {
@@ -123,7 +125,7 @@ pub async fn extract_data_backup_zip(zip_path: String, extract_dir: String) -> R
 
                 let target_path = extract_root.join(&entry_path);
 
-                if entry.is_dir() {
+                if entry.is_dir() || entry_path.ends_with('/') {
                     std::fs::create_dir_all(&target_path).with_context(|| {
                         rquickjs_playground::tr!(
                             "failed-to-create-directory",
