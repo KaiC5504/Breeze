@@ -1,0 +1,93 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.cargo
+      RUSTUP_HOME: ${{ github.workspace }}/.rustup
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 设置 Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: 设置 Dart SDK
+        uses: dart-lang/setup-dart@v1
+
+      - name: 设置 Flutter (FVM)
+        run: |
+          dart pub global activate fvm
+          echo "$HOME/.pub-cache/bin" >> $GITHUB_PATH
+          export PATH="$PATH:$HOME/.pub-cache/bin"
+          fvm install && fvm use --force
+          echo "$GITHUB_WORKSPACE/.fvm/flutter_sdk/bin" >> $GITHUB_PATH
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: 校验并修复 rustup
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$CARGO_HOME" "$RUSTUP_HOME"
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+          export PATH="$CARGO_HOME/bin:$PATH"
+
+          if ! rustup --version || ! rustup toolchain list; then
+            echo "Detected invalid rustup binary, reinstalling..."
+            rm -f "$CARGO_HOME/bin/rustup" "$CARGO_HOME/bin/rustup-init"
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --no-modify-path
+            export PATH="$CARGO_HOME/bin:$PATH"
+            rustup --version
+            rustup toolchain list
+          fi
+
+      - name: 缓存 Rust 构建产物
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            rust
+
+      - name: 编译 iOS (无签)
+        run: |
+          export PATH="$CARGO_HOME/bin:$PATH"
+          export SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)"
+          export CARGO_TARGET_AARCH64_APPLE_IOS_LINKER="$(xcrun --sdk iphoneos --find clang)"
+          export IPHONEOS_DEPLOYMENT_TARGET="15.0"
+          export CFLAGS_aarch64_apple_ios="-miphoneos-version-min=$IPHONEOS_DEPLOYMENT_TARGET -isysroot $SDKROOT"
+          export CXXFLAGS_aarch64_apple_ios="$CFLAGS_aarch64_apple_ios"
+          export CARGO_TARGET_AARCH64_APPLE_IOS_RUSTFLAGS="-C link-arg=-miphoneos-version-min=$IPHONEOS_DEPLOYMENT_TARGET"
+          export RUSTFLAGS="$CARGO_TARGET_AARCH64_APPLE_IOS_RUSTFLAGS"
+          rm -f rust/.cargo/config.toml
+          fvm flutter precache --ios
+          fvm flutter pub get
+          # 关闭整个项目的强签名要求，产出无签 IPA，由侧载工具在安装时签名
+          sed -i '' 's/CODE_SIGNING_REQUIRED = YES;/CODE_SIGNING_REQUIRED = NO;/g' ios/Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/CODE_SIGNING_ALLOWED = YES;/CODE_SIGNING_ALLOWED = NO;/g' ios/Runner.xcodeproj/project.pbxproj
+          fvm flutter build ios --release --no-codesign --split-debug-info=build/symbols
+
+      - name: 封装 IPA
+        run: |
+          mkdir -p Payload
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          zip -r "Breeze-iOS.ipa" Payload
+
+      - name: 上传 iOS IPA
+        uses: actions/upload-artifact@v6
+        with:
+          name: ios-ipa
+          path: Breeze-iOS.ipa
+          retention-days: 14

@@ -363,7 +363,7 @@ Future<void> _importCover({
     encodePath(path: normalizeStoredAssetPath(originalCoverPath)),
   );
 
-  await Directory(targetComicDir).create(recursive: true);
+  await Directory(p.dirname(targetCoverPath)).create(recursive: true);
   await sourceFile.copy(targetCoverPath);
 }
 
